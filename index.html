@@ -115,7 +115,7 @@ textarea { resize: vertical; min-height: 80px; }
 <header onclick="goHome()">
   <div style="width:36px;height:36px;background:rgba(255,255,255,0.2);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:1.2rem">📅</div>
   <h1>MeetUp</h1>
-  <button onclick="event.stopPropagation();document.getElementById('apikey-input').value=CFG.getKey();document.getElementById('apikey-error').style.display='none';document.getElementById('apikey-ok').style.display='none';openModal('m-apikey')" style="margin-left:auto;font-size:0.72rem;background:rgba(255,255,255,0.2);padding:5px 12px;border-radius:12px;font-weight:600;letter-spacing:0.03em;border:none;color:white;cursor:pointer" id="apikey-status">🔑 Set API Key</button>
+  <span style="margin-left:auto;font-size:0.72rem;background:rgba(255,255,255,0.2);padding:3px 10px;border-radius:12px;font-weight:600;letter-spacing:0.03em">🌐 Shared</span>
 </header>
 
 <!-- HOME -->
@@ -143,9 +143,7 @@ textarea { resize: vertical; min-height: 80px; }
     <button class="back-btn" onclick="goHome()">← Back</button>
     <h2>Create a Meeting Poll</h2>
     <p class="subtitle">Fill in the details below, add time options, then create your event.</p>
-
     <div id="create-error" class="error"></div>
-
     <div class="card">
       <div class="step"><div class="step-num">1</div><div class="step-text">Tell us about the event</div></div>
       <div class="fg"><label>Event Title *</label><input type="text" id="c-title" placeholder="e.g. Team Sync, Photo Review, Q1 Kickoff"></div>
@@ -157,7 +155,6 @@ textarea { resize: vertical; min-height: 80px; }
         <p class="hint">⚠️ Save this PIN — you'll need it to lock in a date or delete the event.</p>
       </div>
     </div>
-
     <div class="card">
       <div class="step"><div class="step-num">2</div><div class="step-text">Add your proposed time options (minimum 2)</div></div>
       <div id="slot-list" class="slot-list"></div>
@@ -167,7 +164,6 @@ textarea { resize: vertical; min-height: 80px; }
         <button class="btn btn-secondary" style="flex-shrink:0" onclick="addSlot()">+ Add</button>
       </div>
     </div>
-
     <div class="card">
       <div class="step"><div class="step-num">3</div><div class="step-text">Create your event</div></div>
       <button class="btn btn-primary btn-full" id="create-btn" onclick="doCreate()">Create Event &amp; Get Link →</button>
@@ -216,23 +212,6 @@ textarea { resize: vertical; min-height: 80px; }
   </div>
 </div>
 
-<!-- MODAL: API Key Setup -->
-<div class="overlay" id="m-apikey">
-  <div class="modal" style="max-width:420px">
-    <button class="x" onclick="closeModal('m-apikey')">✕</button>
-    <h3>🔑 JSONBin API Key</h3>
-    <p style="color:#6b7280;font-size:.85rem;margin-bottom:16px">
-      This app uses <strong>JSONBin.io</strong> to store events in the cloud so anyone with the link can vote from any device.<br><br>
-      Get your free API key at <a href="https://jsonbin.io/app/app/api-keys" target="_blank" style="color:#4f46e5">jsonbin.io → API Keys</a>, then paste it below.
-    </p>
-    <div class="fg"><label>X-Master-Key</label><input type="password" id="apikey-input" placeholder="$2a$10$..." style="font-family:monospace"></div>
-    <div id="apikey-error" style="color:#dc2626;font-size:.82rem;margin-bottom:10px;display:none">⚠️ Could not connect. Check your key and try again.</div>
-    <div id="apikey-ok" style="color:#16a34a;font-size:.82rem;margin-bottom:10px;display:none">✅ Connected successfully!</div>
-    <button class="btn btn-primary btn-full" onclick="saveApiKey()">Save &amp; Connect</button>
-    <p style="font-size:.72rem;color:#9ca3af;margin-top:12px;text-align:center">Your key is stored only in this browser's localStorage. Event data lives in JSONBin.</p>
-  </div>
-</div>
-
 <!-- MODAL: Delete -->
 <div class="overlay" id="m-delete">
   <div class="modal">
@@ -247,141 +226,89 @@ textarea { resize: vertical; min-height: 80px; }
 </div>
 
 <script>
-// DATA
 var CUR = null;
 var ADMIN = false;
 var SLOTS = [];
 
-// ─── JSONBin v3 Backend ───────────────────────────────────────────────────────
-// Each event = one JSONBin bin. The bin ID is stored alongside event data in
-// localStorage (only the bin ID map + API key live locally; all real data is in JSONBin).
-var JBAPI = 'https://api.jsonbin.io/v3/b';
+// ═══════════════════════════════════════════════════════
+// API — Netlify functions bridge
+// ═══════════════════════════════════════════════════════
+var API_BASE = '/.netlify/functions';
 
-var CFG = {
-  _lk: 'meetup_cfg_v1',
-  load: function() { try { return JSON.parse(localStorage.getItem(this._lk)) || {}; } catch(e) { return {}; } },
-  save: function(d) { localStorage.setItem(this._lk, JSON.stringify(d)); },
-  getKey: function() { return this.load().apiKey || ''; },
-  setKey: function(k) { var d = this.load(); d.apiKey = k; this.save(d); },
-  // map of eventId -> binId
-  getBinId: function(id) { return (this.load().bins || {})[id] || null; },
-  setBinId: function(id, binId) { var d = this.load(); d.bins = d.bins || {}; d.bins[id] = binId; this.save(d); },
-  delBinId: function(id) { var d = this.load(); if (d.bins) { delete d.bins[id]; this.save(d); } },
-  allBinIds: function() { return this.load().bins || {}; }
-};
-
-function jbHeaders(extra) {
-  var h = { 'Content-Type': 'application/json', 'X-Master-Key': CFG.getKey(), 'X-Bin-Versioning': 'false' };
-  return Object.assign(h, extra || {});
+async function apiSaveEvent(ev) {
+  try {
+    var res = await fetch(API_BASE + '/save-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ev)
+    });
+    return res.ok;
+  } catch(e) { console.warn('apiSaveEvent failed', e); return false; }
 }
 
+async function apiFetchEvents() {
+  try {
+    var res = await fetch(API_BASE + '/get-events');
+    if (!res.ok) return null;
+    var data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch(e) { console.warn('apiFetchEvents failed', e); return null; }
+}
+
+async function apiDeleteEvent(id) {
+  try {
+    var res = await fetch(API_BASE + '/delete-event', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id })
+    });
+    return res.ok;
+  } catch(e) { return false; }
+}
+
+// ═══════════════════════════════════════════════════════
+// DB — thin wrapper over API with localStorage cache
+// ═══════════════════════════════════════════════════════
 var DB = {
+  _cacheKey: 'meetup_cache_v1',
+  _cache: function() {
+    try { return JSON.parse(localStorage.getItem(this._cacheKey)) || {}; } catch(e) { return {}; }
+  },
+  _setCache: function(arr) {
+    var map = {};
+    arr.forEach(function(ev) { if (ev && ev.id) map[ev.id] = ev; });
+    localStorage.setItem(this._cacheKey, JSON.stringify(map));
+  },
   get: async function(id) {
-    var binId = CFG.getBinId(id);
-    if (!binId) return null;
-    try {
-      var r = await fetch(JBAPI + '/' + binId + '/latest?meta=false', { headers: jbHeaders() });
-      if (!r.ok) return null;
-      var data = await r.json();
-      // JSONBin wraps in {record:...} when meta=true, but meta=false returns record directly
-      return data.record !== undefined ? data.record : data;
-    } catch(e) { console.error('DB.get', e); return null; }
+    var all = await apiFetchEvents();
+    if (all !== null) {
+      this._setCache(all);
+      for (var i = 0; i < all.length; i++) { if (all[i].id === id) return all[i]; }
+      return null;
+    }
+    return this._cache()[id] || null;
   },
   set: async function(ev) {
-    var binId = CFG.getBinId(ev.id);
-    try {
-      if (binId) {
-        // Update existing bin
-        var r = await fetch(JBAPI + '/' + binId, {
-          method: 'PUT',
-          headers: jbHeaders(),
-          body: JSON.stringify(ev)
-        });
-        if (!r.ok) throw new Error('PUT failed ' + r.status);
-      } else {
-        // Create new bin
-        var r = await fetch(JBAPI, {
-          method: 'POST',
-          headers: jbHeaders({ 'X-Bin-Name': 'meetup-' + ev.id, 'X-Bin-Private': 'true' }),
-          body: JSON.stringify(ev)
-        });
-        if (!r.ok) throw new Error('POST failed ' + r.status);
-        var data = await r.json();
-        CFG.setBinId(ev.id, data.metadata.id);
-      }
-    } catch(e) { console.error('DB.set', e); throw e; }
+    await apiSaveEvent(ev);
+    var c = this._cache(); c[ev.id] = ev;
+    localStorage.setItem(this._cacheKey, JSON.stringify(c));
   },
   del: async function(id) {
-    var binId = CFG.getBinId(id);
-    if (!binId) return;
-    try {
-      await fetch(JBAPI + '/' + binId, { method: 'DELETE', headers: jbHeaders() });
-      CFG.delBinId(id);
-    } catch(e) { console.error('DB.del', e); }
+    await apiDeleteEvent(id);
+    var c = this._cache(); delete c[id];
+    localStorage.setItem(this._cacheKey, JSON.stringify(c));
   },
   all: async function() {
-    var map = CFG.allBinIds();
-    var ids = Object.keys(map);
-    if (!ids.length) return {};
-    var out = {};
-    await Promise.all(ids.map(async function(id) {
-      var ev = await DB.get(id);
-      if (ev) out[ev.id] = ev;
-    }));
-    return out;
+    var all = await apiFetchEvents();
+    if (all !== null) {
+      this._setCache(all);
+      var out = {};
+      all.forEach(function(ev) { if (ev && ev.id) out[ev.id] = ev; });
+      return out;
+    }
+    return this._cache();
   }
 };
-
-// API KEY MANAGEMENT
-function updateApiKeyStatus() {
-  var btn = document.getElementById('apikey-status');
-  if (!btn) return;
-  var key = CFG.getKey();
-  if (key) {
-    btn.textContent = '🔑 API Key ✓';
-    btn.style.background = 'rgba(34,197,94,0.3)';
-  } else {
-    btn.textContent = '🔑 Set API Key';
-    btn.style.background = 'rgba(255,255,255,0.2)';
-  }
-}
-
-async function saveApiKey() {
-  var key = document.getElementById('apikey-input').value.trim();
-  var errEl = document.getElementById('apikey-error');
-  var okEl = document.getElementById('apikey-ok');
-  errEl.style.display = 'none'; okEl.style.display = 'none';
-  if (!key) { errEl.textContent = '⚠️ Please enter your API key.'; errEl.style.display = 'block'; return; }
-  // Test the key by creating and immediately deleting a tiny test bin
-  try {
-    var r = await fetch(JBAPI, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Master-Key': key, 'X-Bin-Name': 'meetup-test', 'X-Bin-Private': 'true', 'X-Bin-Versioning': 'false' },
-      body: JSON.stringify({ test: true })
-    });
-    if (!r.ok) throw new Error('status ' + r.status);
-    var data = await r.json();
-    // Clean up test bin
-    await fetch(JBAPI + '/' + data.metadata.id, { method: 'DELETE', headers: { 'X-Master-Key': key } });
-    CFG.setKey(key);
-    okEl.style.display = 'block';
-    updateApiKeyStatus();
-    setTimeout(function() { closeModal('m-apikey'); }, 1200);
-  } catch(e) {
-    errEl.textContent = '⚠️ Could not connect. Check your key and try again.';
-    errEl.style.display = 'block';
-  }
-}
-
-function requireKey() {
-  // Returns true if we have a key, otherwise opens the modal and returns false
-  if (CFG.getKey()) return true;
-  document.getElementById('apikey-input').value = '';
-  document.getElementById('apikey-error').style.display = 'none';
-  document.getElementById('apikey-ok').style.display = 'none';
-  openModal('m-apikey');
-  return false;
-}
 
 // PAGES
 function showPage(id) {
@@ -390,23 +317,21 @@ function showPage(id) {
   document.getElementById(id).classList.add('active');
   window.scrollTo(0, 0);
 }
-function goCreate() { if (!requireKey()) return; showPage('pg-create'); }
-function goBrowse() { if (!requireKey()) return; renderBrowse().then(function(){ showPage('pg-browse'); }); }
+function goCreate() { showPage('pg-create'); }
+function goBrowse() { renderBrowse().then(function(){ showPage('pg-browse'); }); }
+function goHome() { CUR = null; ADMIN = false; location.hash = ''; showPage('pg-home'); }
 
 // MODALS
 function openModal(id)  { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
-// SHOW ERROR on create page
+// ERRORS
 function showError(msg) {
   var el = document.getElementById('create-error');
-  el.textContent = msg;
-  el.classList.add('show');
+  el.textContent = msg; el.classList.add('show');
   el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
-function clearError() {
-  document.getElementById('create-error').classList.remove('show');
-}
+function clearError() { document.getElementById('create-error').classList.remove('show'); }
 
 // SLOTS
 function addSlot() {
@@ -415,20 +340,12 @@ function addSlot() {
   for (var i = 0; i < SLOTS.length; i++) {
     if (SLOTS[i] === dt) { showError('That date and time is already in the list.'); return; }
   }
-  SLOTS.push(dt);
-  clearError();
-  renderSlots();
+  SLOTS.push(dt); clearError(); renderSlots();
   document.getElementById('c-dt').value = '';
 }
-
-function removeSlot(i) {
-  SLOTS.splice(i, 1);
-  renderSlots();
-}
-
+function removeSlot(i) { SLOTS.splice(i, 1); renderSlots(); }
 function renderSlots() {
-  var el = document.getElementById('slot-list');
-  var html = '';
+  var el = document.getElementById('slot-list'); var html = '';
   for (var i = 0; i < SLOTS.length; i++) {
     html += '<div class="slot-item"><span>📅 ' + fmtDT(SLOTS[i]) + '</span>' +
             '<button onclick="removeSlot(' + i + ')" title="Remove">✕</button></div>';
@@ -437,7 +354,7 @@ function renderSlots() {
   document.getElementById('slot-count').textContent = SLOTS.length + ' time option' + (SLOTS.length !== 1 ? 's' : '') + ' added';
 }
 
-// PIN
+// PIN hash
 function hPin(pin) {
   var h = 0;
   for (var i = 0; i < pin.length; i++) h = (Math.imul(31, h) + pin.charCodeAt(i)) | 0;
@@ -451,36 +368,25 @@ async function doCreate() {
   var desc  = document.getElementById('c-desc').value.trim();
   var org   = document.getElementById('c-org').value.trim();
   var pin   = document.getElementById('c-pin').value.trim();
-
-  if (!title)          { showError('⚠️ Please enter an Event Title.'); return; }
-  if (!org)            { showError('⚠️ Please enter your name.'); return; }
-  if (pin.length < 4)  { showError('⚠️ PIN must be at least 4 digits.'); return; }
-  if (SLOTS.length < 2){ showError('⚠️ Please add at least 2 time options using the date picker and + Add button above.'); return; }
+  if (!title)           { showError('⚠️ Please enter an Event Title.'); return; }
+  if (!org)             { showError('⚠️ Please enter your name.'); return; }
+  if (pin.length < 4)   { showError('⚠️ PIN must be at least 4 digits.'); return; }
+  if (SLOTS.length < 2) { showError('⚠️ Please add at least 2 time options.'); return; }
 
   var btn = document.getElementById('create-btn');
-  btn.disabled = true;
-  btn.textContent = 'Saving…';
+  btn.disabled = true; btn.textContent = 'Saving…';
 
   var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-  await DB.set({
-    id: id, title: title, desc: desc, org: org,
-    ph: hPin(pin), slots: SLOTS.slice(),
-    votes: {}, decided: null, ts: Date.now()
-  });
+  await DB.set({ id:id, title:title, desc:desc, org:org, ph:hPin(pin), slots:SLOTS.slice(), votes:{}, decided:null, ts:Date.now() });
 
-  // Reset
   document.getElementById('c-title').value = '';
   document.getElementById('c-desc').value  = '';
   document.getElementById('c-org').value   = '';
   document.getElementById('c-pin').value   = '';
-  SLOTS = [];
-  renderSlots();
-  clearError();
-  btn.disabled = false;
-  btn.textContent = 'Create Event & Get Link →';
+  SLOTS = []; renderSlots(); clearError();
+  btn.disabled = false; btn.textContent = 'Create Event & Get Link →';
 
-  CUR = id;
-  ADMIN = true;
+  CUR = id; ADMIN = true;
   location.hash = 'event-' + id;
   await renderEvent(id);
   showPage('pg-event');
@@ -492,12 +398,8 @@ async function renderBrowse() {
   el.innerHTML = '<div class="empty"><div class="ei">⏳</div><p>Loading events…</p></div>';
   var all = await DB.all();
   var keys = Object.keys(all);
-  var el = document.getElementById('browse-list');
-  if (!keys.length) {
-    el.innerHTML = '<div class="empty"><div class="ei">📭</div><p>No events yet — create one!</p></div>';
-    return;
-  }
-  var evs = keys.map(function(k) { return all[k]; }).sort(function(a, b) { return b.ts - a.ts; });
+  if (!keys.length) { el.innerHTML = '<div class="empty"><div class="ei">📭</div><p>No events yet — create one!</p></div>'; return; }
+  var evs = keys.map(function(k){ return all[k]; }).sort(function(a,b){ return b.ts - a.ts; });
   var html = '<div class="ev-list">';
   evs.forEach(function(ev) {
     var n = Object.keys(ev.votes).length;
@@ -505,16 +407,13 @@ async function renderBrowse() {
     var label  = ev.decided ? '✓ Date Decided' : '🗳 Voting Open';
     html += '<div class="ev-card" onclick="openEv(\'' + ev.id + '\')">' +
       '<h3>' + esc(ev.title) + '</h3>' +
-      (ev.desc ? '<p>' + esc(ev.desc).slice(0, 100) + (ev.desc.length > 100 ? '…' : '') + '</p>' : '') +
-      '<div class="tags">' +
-        '<span class="tag ' + status + '">' + label + '</span>' +
-        '<span class="tag">' + ev.slots.length + ' options</span>' +
-        '<span class="tag">' + n + ' vote' + (n !== 1 ? 's' : '') + '</span>' +
-        '<span class="tag">by ' + esc(ev.org) + '</span>' +
-      '</div></div>';
+      (ev.desc ? '<p>' + esc(ev.desc).slice(0,100) + (ev.desc.length>100?'…':'') + '</p>' : '') +
+      '<div class="tags"><span class="tag ' + status + '">' + label + '</span>' +
+      '<span class="tag">' + ev.slots.length + ' options</span>' +
+      '<span class="tag">' + n + ' vote' + (n!==1?'s':'') + '</span>' +
+      '<span class="tag">by ' + esc(ev.org) + '</span></div></div>';
   });
-  html += '</div>';
-  el.innerHTML = html;
+  el.innerHTML = html + '</div>';
 }
 
 async function openEv(id) {
@@ -522,12 +421,6 @@ async function openEv(id) {
   location.hash = 'event-' + id;
   await renderEvent(id);
   showPage('pg-event');
-}
-
-function goHome() {
-  CUR = null; ADMIN = false;
-  location.hash = '';
-  showPage('pg-home');
 }
 
 // RENDER EVENT
@@ -544,24 +437,25 @@ async function renderEvent(id) {
 
   html += '<div class="ev-header"><h2>' + esc(ev.title) + '</h2>' +
     (ev.desc ? '<p>' + esc(ev.desc) + '</p>' : '') +
-    '<div class="tags">' +
-      '<span class="tag">by ' + esc(ev.org) + '</span>' +
-      '<span class="tag ' + (ev.decided ? 'done' : 'open') + '">' + (ev.decided ? '✓ Decided' : '🗳 Voting Open') + '</span>' +
-      '<span class="tag">' + n + ' response' + (n !== 1 ? 's' : '') + '</span>' +
+    '<div class="tags"><span class="tag">by ' + esc(ev.org) + '</span>' +
+    '<span class="tag ' + (ev.decided?'done':'open') + '">' + (ev.decided?'✓ Decided':'🗳 Voting Open') + '</span>' +
+    '<span class="tag">' + n + ' response' + (n!==1?'s':'') + '</span>' +
     '</div></div><hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">';
 
   if (ADMIN) {
     html += '<div class="organizer-box"><div class="ob-title">⚡ Organizer Controls</div>' +
       '<p style="font-size:.82rem;color:#92400e;margin-bottom:10px">Share this link — anyone who opens it lands directly on this event:</p>' +
-      '<div class="id-box"><span id="share-url-' + id + '" style="font-size:.78rem">' + location.href.split('#')[0] + '#event-' + id + '</span><button onclick="cpShareUrl(\'' + id + '\')">Copy Link</button></div>' +
+      '<div class="id-box"><span style="font-size:.78rem">' + location.href.split('#')[0] + '#event-' + id + '</span>' +
+      '<button onclick="cpShareUrl(\'' + id + '\')">Copy Link</button></div>' +
       '<div class="ob-actions">' +
-        (!ev.decided
-          ? '<button class="btn btn-secondary btn-sm" onclick="openDecide()">🏆 Lock In a Date</button>'
-          : '<button class="btn btn-secondary btn-sm" onclick="reopen()">↩ Reopen Voting</button>') +
-        '<button class="btn btn-danger btn-sm" onclick="openModal(\'m-delete\')">🗑 Delete Event</button>' +
+      (!ev.decided
+        ? '<button class="btn btn-secondary btn-sm" onclick="openDecide()">🏆 Lock In a Date</button>'
+        : '<button class="btn btn-secondary btn-sm" onclick="reopen()">↩ Reopen Voting</button>') +
+      '<button class="btn btn-danger btn-sm" onclick="openModal(\'m-delete\')">🗑 Delete Event</button>' +
       '</div></div>';
   } else {
-    html += '<p style="font-size:.8rem;color:#9ca3af;text-align:center;margin-bottom:16px">Organizer? <button onclick="openModal(\'m-pin\')" style="background:none;border:none;color:#4f46e5;cursor:pointer;font-size:.8rem;font-family:Arial;font-weight:700">Click here to enter your PIN</button> and manage this event.</p>';
+    html += '<p style="font-size:.8rem;color:#9ca3af;text-align:center;margin-bottom:16px">Organizer? ' +
+      '<button onclick="openModal(\'m-pin\')" style="background:none;border:none;color:#4f46e5;cursor:pointer;font-size:.8rem;font-family:Arial;font-weight:700">Click here to enter your PIN</button> and manage this event.</p>';
   }
 
   if (!ev.decided) {
@@ -569,15 +463,14 @@ async function renderEvent(id) {
       '<div class="fg"><label>Your Name *</label><input type="text" id="vname" placeholder="Your name"></div>' +
       '<div class="step" style="margin-top:4px"><div class="step-num">2</div><div class="step-text">Vote on each time slot</div></div>';
     ev.slots.forEach(function(slot, si) {
-      html += '<div class="vote-card"><div class="vd">📅 ' + fmtDT(slot) + '</div>' +
-        '<div class="vopts">' +
-          '<button class="vb best" data-s="' + si + '" data-v="best" onclick="pick(this)">✅ Best</button>' +
-          '<button class="vb ok"   data-s="' + si + '" data-v="ok"   onclick="pick(this)">🤔 OK</button>' +
-          '<button class="vb cant" data-s="' + si + '" data-v="cant" onclick="pick(this)">❌ Can\'t Make It</button>' +
+      html += '<div class="vote-card"><div class="vd">📅 ' + fmtDT(slot) + '</div><div class="vopts">' +
+        '<button class="vb best" data-s="' + si + '" data-v="best" onclick="pick(this)">✅ Best</button>' +
+        '<button class="vb ok"   data-s="' + si + '" data-v="ok"   onclick="pick(this)">🤔 OK</button>' +
+        '<button class="vb cant" data-s="' + si + '" data-v="cant" onclick="pick(this)">❌ Can\'t Make It</button>' +
         '</div></div>';
     });
     html += '<div id="vote-error" style="color:#dc2626;background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px;margin-top:10px;display:none"></div>';
-    html += '<button class="btn btn-primary btn-full" style="margin-top:12px" onclick="submitVote(\'' + id + '\')">Submit My Votes →</button></div>';
+    html += '<button class="btn btn-primary btn-full" id="submit-vote-btn" style="margin-top:12px" onclick="submitVote(\'' + id + '\')">Submit My Votes →</button></div>';
   }
 
   if (n > 0) {
@@ -586,9 +479,7 @@ async function renderEvent(id) {
       '<button class="btn btn-primary" style="background:linear-gradient(135deg,#7c3aed,#4f46e5);width:100%;justify-content:center;padding:14px;font-size:1rem" onclick="runAIAnalysis(\'' + id + '\')">' +
       '✨ AI Analysis — Pick the Best Date</button>' +
       '<div id="ai-result" style="display:none;margin-top:16px;background:white;border:2px solid #a78bfa;border-radius:12px;padding:22px">' +
-        '<div id="ai-result-inner"></div>' +
-      '</div>' +
-    '</div>';
+      '<div id="ai-result-inner"></div></div></div>';
   }
   document.getElementById('ev-content').innerHTML = html;
 }
@@ -608,14 +499,13 @@ async function submitVote(id) {
   var res = {}; var ok = true;
   for (var si = 0; si < ev.slots.length; si++) {
     var sel = document.querySelector('.vb[data-s="' + si + '"].sel');
-    if (sel) res[si] = sel.getAttribute('data-v');
-    else ok = false;
+    if (sel) res[si] = sel.getAttribute('data-v'); else ok = false;
   }
   if (!ok) { errEl.textContent = '⚠️ Please vote on every time slot before submitting.'; errEl.style.display='block'; return; }
   errEl.style.display = 'none';
   ev.votes[name] = res;
-  var btn = document.querySelector('#ev-content .btn-primary[onclick*="submitVote"]');
-  if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  var submitBtn = document.getElementById('submit-vote-btn');
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Saving…'; }
   await DB.set(ev);
   await renderEvent(id);
 }
@@ -631,15 +521,13 @@ function buildResults(ev) {
     });
     return { dt:slot, best:best, ok:ok, cant:cant, score:best*2+ok };
   });
-  var max = 0;
-  scores.forEach(function(s) { if (s.score > max) max = s.score; });
-  var sorted = scores.slice().sort(function(a,b) { return b.score - a.score; });
+  var max = 0; scores.forEach(function(s){ if(s.score>max) max=s.score; });
+  var sorted = scores.slice().sort(function(a,b){ return b.score-a.score; });
 
   var html = '<div class="results"><h3>📊 Results — ' + total + ' Response' + (total!==1?'s':'') + '</h3>';
   sorted.forEach(function(s) {
-    var win = s.score === max && max > 0;
-    html += '<div class="rr' + (win?' win':'') + '">' +
-      '<div class="rd">' + fmtDT(s.dt) + '</div>' +
+    var win = s.score===max && max>0;
+    html += '<div class="rr' + (win?' win':'') + '"><div class="rd">' + fmtDT(s.dt) + '</div>' +
       '<div class="bar-row"><span class="bar-lbl">✅ Best (×2)</span><div class="bar-track"><div class="bar-fill best" style="width:' + (total?s.best/total*100:0) + '%"></div></div><span class="bar-n">' + s.best + '</span></div>' +
       '<div class="bar-row"><span class="bar-lbl">🤔 OK (×1)</span><div class="bar-track"><div class="bar-fill ok" style="width:' + (total?s.ok/total*100:0) + '%"></div></div><span class="bar-n">' + s.ok + '</span></div>' +
       '<div class="bar-row"><span class="bar-lbl">❌ Can\'t</span><div class="bar-track"><div class="bar-fill cant" style="width:' + (total?s.cant/total*100:0) + '%"></div></div><span class="bar-n">' + s.cant + '</span></div>' +
@@ -647,7 +535,7 @@ function buildResults(ev) {
   });
 
   html += '<div style="overflow-x:auto;margin-top:14px"><table class="resp-table"><thead><tr><th>Name</th>';
-  ev.slots.forEach(function(s) { html += '<th>' + fmtShort(s) + '</th>'; });
+  ev.slots.forEach(function(s){ html += '<th>' + fmtShort(s) + '</th>'; });
   html += '</tr></thead><tbody>';
   names.forEach(function(nm) {
     html += '<tr><td style="font-weight:700">' + esc(nm) + '</td>';
@@ -677,7 +565,7 @@ async function checkPin() {
 async function openDecide() {
   var ev = await DB.get(CUR); if (!ev) return;
   var sel = document.getElementById('decide-sel');
-  sel.innerHTML = ev.slots.map(function(s) { return '<option value="' + s + '">' + fmtDT(s) + '</option>'; }).join('');
+  sel.innerHTML = ev.slots.map(function(s){ return '<option value="' + s + '">' + fmtDT(s) + '</option>'; }).join('');
   openModal('m-decide');
 }
 
@@ -706,27 +594,15 @@ async function doDelete() {
 function cpShareUrl(id) {
   var url = location.href.split('#')[0] + '#event-' + id;
   if (navigator.clipboard) {
-    navigator.clipboard.writeText(url).catch(function() { prompt('Copy this link:', url); });
-  } else {
-    prompt('Copy this link:', url);
-  }
+    navigator.clipboard.writeText(url).catch(function(){ prompt('Copy this link:', url); });
+  } else { prompt('Copy this link:', url); }
 }
 
-function cpText(t) {
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(t).catch(function() { prompt('Copy:', t); });
-  } else {
-    prompt('Copy:', t);
-  }
-}
-
-// On load: update key status badge + deep-link to event from URL hash
+// On load: deep-link from URL hash
 (async function() {
-  updateApiKeyStatus();
   var hash = location.hash;
   if (hash && hash.indexOf('#event-') === 0) {
     var id = hash.slice(7);
-    if (!requireKey()) return; // prompt for key first
     var ev = await DB.get(id);
     if (ev) {
       CUR = id; ADMIN = false;
@@ -735,7 +611,7 @@ function cpText(t) {
     } else {
       var note = document.createElement('div');
       note.style.cssText = 'background:#fee2e2;border:2px solid #fca5a5;border-radius:10px;padding:14px 18px;margin-bottom:20px;color:#dc2626;font-weight:600;text-align:center;font-size:.9rem';
-      note.innerHTML = '⚠️ Event not found. <span style="font-weight:400;color:#7f1d1d">It may have been deleted, or the link may be incorrect.</span>';
+      note.textContent = '⚠️ Event not found. It may have been deleted, or the link may be incorrect.';
       var homeContainer = document.querySelector('#pg-home .container');
       if (homeContainer) homeContainer.insertBefore(note, homeContainer.firstChild);
     }
@@ -751,88 +627,58 @@ async function runAIAnalysis(id) {
   var resultBox = document.getElementById('ai-result');
   var inner = document.getElementById('ai-result-inner');
 
-  btn.disabled = true;
-  btn.textContent = '✨ Analyzing votes…';
+  btn.disabled = true; btn.textContent = '✨ Analyzing votes…';
   resultBox.style.display = 'block';
   inner.innerHTML = '<div style="display:flex;align-items:center;gap:10px;color:#7c3aed;font-weight:600">' +
     '<div style="width:20px;height:20px;border:3px solid #a78bfa;border-top-color:#7c3aed;border-radius:50%;animation:spin 0.8s linear infinite"></div>' +
-    'Claude is analyzing responses…</div>' +
-    '<style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+    'Claude is analyzing responses…</div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
 
-  // Build summary for Claude
   var scores = ev.slots.map(function(slot, si) {
     var best=0, ok=0, cant=0;
     voters.forEach(function(nm) {
       var v = ev.votes[nm][si];
       if (v==='best') best++; else if (v==='ok') ok++; else if (v==='cant') cant++;
     });
-    return { dt: slot, best: best, ok: ok, cant: cant, score: best*2+ok, total: voters.length };
+    return { dt:slot, best:best, ok:ok, cant:cant, score:best*2+ok, total:voters.length };
   });
 
-  var slotSummary = scores.map(function(s, i) {
-    return 'Option ' + (i+1) + ': ' + fmtDT(s.dt) +
-      ' — Best: ' + s.best + ', OK: ' + s.ok + ", Can't: " + s.cant +
-      ' (score: ' + s.score + '/' + (s.total*2) + ')';
+  var slotSummary = scores.map(function(s,i){
+    return 'Option '+(i+1)+': '+fmtDT(s.dt)+' — Best: '+s.best+', OK: '+s.ok+", Can't: "+s.cant+' (score: '+s.score+'/'+(s.total*2)+')';
   }).join('\n');
 
-  var voterDetail = voters.map(function(nm) {
-    var votes = ev.slots.map(function(_, si) { return ev.votes[nm][si] || 'none'; });
-    return nm + ': ' + votes.map(function(v,i){ return 'Option '+(i+1)+' = '+v; }).join(', ');
+  var voterDetail = voters.map(function(nm){
+    var votes = ev.slots.map(function(_,si){ return ev.votes[nm][si]||'none'; });
+    return nm+': '+votes.map(function(v,i){ return 'Option '+(i+1)+' = '+v; }).join(', ');
   }).join('\n');
 
   var prompt = 'You are helping pick the best meeting time. Here is the voting data:\n\n' +
-    'Event: ' + ev.title + '\n' +
-    'Respondents: ' + voters.join(', ') + ' (' + voters.length + ' total)\n\n' +
-    'Time Options & Votes:\n' + slotSummary + '\n\n' +
-    'Individual responses:\n' + voterDetail + '\n\n' +
-    'Please provide:\n' +
-    '1. Your recommended date/time and why (consider both score AND whether anyone absolutely cannot attend)\n' +
-    '2. A brief breakdown of why each option is better or worse\n' +
-    '3. Any notable patterns (e.g. one person blocking every option, near-ties, etc.)\n\n' +
-    'Be concise and practical. Format with clear sections using emoji headers.';
+    'Event: '+ev.title+'\nRespondents: '+voters.join(', ')+' ('+voters.length+' total)\n\n' +
+    'Time Options & Votes:\n'+slotSummary+'\n\nIndividual responses:\n'+voterDetail+'\n\n' +
+    'Please provide:\n1. Your recommended date/time and why\n2. A brief breakdown of each option\n3. Any notable patterns\n\nBe concise. Format with emoji headers.';
 
   try {
     var response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        messages: [{ role: 'user', content: prompt }]
-      })
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 1000, messages: [{ role: 'user', content: prompt }] })
     });
-
     var data = await response.json();
-    var text = '';
-    if (data.content && data.content[0] && data.content[0].text) {
-      text = data.content[0].text;
-    } else {
-      throw new Error('Unexpected response format');
-    }
+    var text = (data.content && data.content[0] && data.content[0].text) ? data.content[0].text : null;
+    if (!text) throw new Error('Unexpected response format');
 
-    // Convert markdown-ish text to HTML
-    var html = text
-      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-      .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>')
-      .replace(/\n\n/g,'</p><p>')
-      .replace(/\n/g,'<br>');
+    var html = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
 
     inner.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">' +
-        '<div style="width:32px;height:32px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-size:1rem;flex-shrink:0">✨</div>' +
-        '<div><div style="font-weight:700;color:#4c1d95;font-size:1rem">AI Analysis</div>' +
-        '<div style="font-size:0.75rem;color:#9ca3af">Powered by Claude</div></div>' +
-      '</div>' +
+      '<div style="width:32px;height:32px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-size:1rem;flex-shrink:0">✨</div>' +
+      '<div><div style="font-weight:700;color:#4c1d95;font-size:1rem">AI Analysis</div>' +
+      '<div style="font-size:0.75rem;color:#9ca3af">Powered by Claude</div></div></div>' +
       '<div style="color:#374151;line-height:1.7;font-size:0.9rem"><p>' + html + '</p></div>';
-
-    btn.textContent = '✨ Re-run AI Analysis';
-    btn.disabled = false;
-
+    btn.textContent = '✨ Re-run AI Analysis'; btn.disabled = false;
   } catch(e) {
-    inner.innerHTML = '<div style="color:#dc2626;font-weight:600">⚠️ Analysis failed: ' + esc(e.message) + '</div>' +
-      '<p style="color:#6b7280;font-size:.85rem;margin-top:8px">This feature requires the Claude API. If you\'re running this file locally, the AI analysis won\'t work — but all voting and results features work normally.</p>';
-    btn.textContent = '✨ Try AI Analysis Again';
-    btn.disabled = false;
+    inner.innerHTML = '<div style="color:#dc2626;font-weight:600">⚠️ Analysis failed: ' + esc(e.message) + '</div>';
+    btn.textContent = '✨ Try AI Analysis Again'; btn.disabled = false;
   }
 }
 
