@@ -58,9 +58,10 @@ exports.handler = async (event) => {
     const ev = JSON.parse(event.body);
     if (!ev || !ev.id) return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid data' }) };
 
-    // Get current events array
+    // Get current events array — force to array regardless of bin contents
     const current = await jsonbinGet();
-    const records = current.record || [];
+    const raw = current.record !== undefined ? current.record : current;
+    const records = Array.isArray(raw) ? raw : [];
 
     // Upsert: replace existing event with same id, or add to front
     const idx = records.findIndex(r => r.id === ev.id);
